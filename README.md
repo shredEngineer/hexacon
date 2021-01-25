@@ -14,3 +14,5 @@ Discussion Thread: https://www.reddit.com/r/holofractal/comments/l4lmrl/enjoy_th
     Play around with it here: https://paulwilhelm.de/hexacon.html [Epilepsy Warning]
 
     The results are quite trippy. :)
+
+![Screenshot](https://raw.githubusercontent.com/shredEngineer/hexacon/main/Screenshot.png "Screenshot")
