@@ -1,5 +1,8 @@
 # hexacon
-Conway's Game of Life on a Hexagonal Grid
+Conway's Game of Life on a Hexagonal Grid (implemented in JavaScript)
+
+Play around with it here: **https://paulwilhelm.de/hexacon.html** [*Epilepsy Warning*]
+
 
 Discussion Thread: https://www.reddit.com/r/holofractal/comments/l4lmrl/enjoy_this_trippy_hexagonal_version_of_conways/
 
@@ -11,8 +14,7 @@ Discussion Thread: https://www.reddit.com/r/holofractal/comments/l4lmrl/enjoy_th
     Why? Because in hexagonal coordinates, there is no ambiguity between the number of
     possible neighbors -- each cell is perfectly surrounded by exactly six neighbors.
 
-    Play around with it here: https://paulwilhelm.de/hexacon.html [Epilepsy Warning]
-
     The results are quite trippy. :)
+
 
 ![Screenshot](https://raw.githubusercontent.com/shredEngineer/hexacon/main/Screenshot.png "Screenshot")
