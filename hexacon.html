@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<!-- saved from url=(0036)https://paulwilhelm.de/hexacon.html# -->
+<html class=" yankqshw idc0_326"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+		<title>hexacon.html</title>
+		
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<script src="./hexacon_files/jquery.min.js"></script>
+		<link rel="stylesheet" href="./hexacon_files/jquery-ui.css">
+		<script src="./hexacon_files/jquery-ui.min.js"></script>
+		<style>body{background:#ccc;text-align:center;font-family:Arial}#favicon{display:none}header,main,footer{max-width:620px;margin:auto}canvas{padding:2px;background:#ddd;border-radius:.1em}fieldset{margin:.5em 0;border:1px solid #bbb;text-align:left}legend{font-weight:bold}label{margin:.25em}.ui-slider .ui-slider-handle{font-size:.75em;padding:.25em;font-weight:bold;text-align:center}a{color:#000}footer{text-shadow:0 0 2px #fff;margin-top:1em}</style>
+		<script>
+			// CONFIG.
+			var show_coordinates = false;
+
+			var width = 615;
+			var height = 535;
+
+			var grid_radius = 60;
+			var grid_radius_max = 100;
+
+			var fps = 60;
+			var fps_max = 60;
+
+			var animation = true;
+
+			var initially_fill_grid = false;
+			var initially_toggle_center_point = true;
+
+			var rules = [0,1,0,0,0,0,0,1];
+
+			// Cartesian projection of u, v, w unit vectors.
+			var unit_u_x = 1;
+			var unit_u_y = 0;
+			var unit_v_x = -1/2;
+			var unit_v_y = +Math.sqrt(3)/2;
+			var unit_w_x = -1/2;
+			var unit_w_y = -Math.sqrt(3)/2;;
+
+			// u, v, w unit vectors.
+			var move_u  = [1,0,0];
+			var move_uv = [1,1,0];
+			var move_v  = [0,1,0];
+			var move_vw = [0,1,1];
+			var move_w  = [0,0,1];
+			var move_wu = [1,0,1];
+			var moves   = [ move_u, move_uv, move_v, move_vw, move_w, move_wu ];
+
+			// Auto-zoom based on width.
+			var canvas_zoom = undefined;
+			var center_x = undefined;
+			var center_y = undefined;
+
+			// Desktop/mobile user input flags.
+			var is_touch_device = 'ontouchstart' in document.documentElement;
+			var mouse_pressed = false;
+
+			// Entry point.
+			var canvas = undefined;
+			$(function() {
+				setFavicon('#favicon');
+				canvas = $('#canvas')[0].getContext('2d');
+
+				$('#slider_grid_radius').slider({
+					min:   0,
+					max:   grid_radius_max,
+					value: grid_radius,
+					step:  1,
+					slide: function( event, ui ) {
+						$('#slider_grid_radius').find('.ui-slider-handle').text(ui.value);
+						grid_radius = ui.value;
+						init(true);
+						drawGrid();
+					}
+				});
+				$('#slider_grid_radius').find('.ui-slider-handle').text(grid_radius);
+
+				$('#slider_fps').slider({
+					min:   1,
+					max:   fps_max,
+					value: fps,
+					step:  1,
+					slide: function( event, ui ) {
+						$('#slider_fps').find('.ui-slider-handle').text(ui.value);
+						fps = ui.value;
+					}
+				});
+				$('#slider_fps').find('.ui-slider-handle').text(fps);
+
+				for (let rule = 0; rule <= 7; rule++) {
+					$('#rule_' + rule).checkboxradio();
+					$('#rule_' + rule).prop('checked', rules[rule]).checkboxradio('refresh');
+					$('#rule_' + rule).on("change", function(event, ui) {
+						loadRules();
+					});
+				}
+
+				$('#clear_grid').click(function() {
+					init(false);
+					drawGrid();
+				});
+
+				$('#toggle_center').click(function() {
+					grid[0][0][0] = !grid[0][0][0];
+					drawGrid();
+				});
+
+				$('#fill_grid').click(function() {
+					init(true);
+					drawGrid();
+				});
+
+				$('#animation').checkboxradio();
+				$('#animation').prop('checked', animation).checkboxradio('refresh');
+
+				if (!is_touch_device) {
+					$('#canvas').mousedown(function(event) {
+						traverseGrid(grid, toggleCell, event);
+						mouse_pressed = true;
+					});
+					$('#canvas').mouseup(function(event) {
+						mouse_pressed = false;
+					});
+				} else {
+					$('#canvas').on('touchstart', function(event) {
+						traverseGrid(grid, toggleCell, event);
+						mouse_pressed = true;
+					});
+					$('#canvas').on('touchend', function(event) {
+						mouse_pressed = false;
+					});
+				}
+
+				init(initially_fill_grid);
+
+				if (initially_toggle_center_point) {
+					grid[0][0][0] = !grid[0][0][0];
+				}
+
+				main();
+			});
+
+			// (Re)Initialize grid and canvas.
+			var grid = undefined;
+			function init(grid_fill) {
+				grid = createGrid(grid_fill)
+
+				// Auto-zoom based on width, auto-center.
+				canvas_zoom = width / 2 / unit_u_x / (grid_radius + 1 / 2);
+				center_x = width / 2;
+				center_y = height / 2;
+
+				canvas.canvas.width = width;
+				canvas.canvas.height = height;
+				canvas.zoom = width / 2 / unit_u_x / (grid_radius + 1 / 2);
+
+				loadRules();
+			}
+
+			// (Re)Load checkbox-based rules.
+			function loadRules() {
+				for (let rule = 0; rule <= 7; rule++) {
+					rules[rule] = $('#rule_' + rule).prop("checked");
+				}
+			}
+
+			// Superloop.
+			function main() {
+				drawGrid();
+				if ($('#animation').prop('checked')) cycleGrid();
+				setTimeout(main, 1000 / fps);
+			}
+
+			// Traverse a (u,v,w) grid, update cells according to callback.
+			function traverseGrid(grid_ref, callback, arg=undefined) {
+				callback(grid_ref, 0, 0, 0, arg);
+
+				let grid_u = 0;
+				for (let grid_v = 0; grid_v <= grid_radius; grid_v++) {
+					for (let grid_w = 1; grid_w <= grid_radius; grid_w++) {
+						callback(grid_ref, grid_u, grid_v, grid_w, arg);
+					}
+				}
+
+				let grid_v = 0;
+				for (let grid_u = 1; grid_u <= grid_radius; grid_u++) {
+					for (let grid_w = 0; grid_w <= grid_radius; grid_w++) {
+						callback(grid_ref, grid_u, grid_v, grid_w, arg);
+					}
+				}
+
+				let grid_w = 0;
+				for (let grid_u = 0; grid_u <= grid_radius; grid_u++) {
+					for (let grid_v = 1; grid_v <= grid_radius; grid_v++) {
+						callback(grid_ref, grid_u, grid_v, grid_w, arg);
+					}
+				}
+			}
+
+			// Create dead u, v, w space.
+			function createGrid(grid_fill) {
+				let new_grid = Array.from(
+					Array(grid_radius + 1), _ => Array.from(
+						Array(grid_radius + 1), _ => Array(grid_radius + 1).fill(grid_fill)
+					)
+				);
+				return new_grid;
+			}
+
+			// Update alive state of a single cell.
+			function updateCell(grid_ref, grid_u, grid_v, grid_w, arg=undefined) {
+				let area = getAreaAround(grid_u, grid_v, grid_w);
+				let alive_new = rules[area];
+				grid_ref[grid_u][grid_v][grid_w] = alive_new;
+			}
+
+			// Compute the next grid state.
+			function cycleGrid() {
+				let new_grid = createGrid(false);
+				traverseGrid(new_grid, updateCell);
+				grid = new_grid;
+			}
+
+			// Check if (u,v,w) coordinate is out of bounds.
+			function isOutOfBounds(grid_u, grid_v, grid_w) {
+				return (grid_u > grid_radius || grid_v > grid_radius || grid_w > grid_radius);
+			}
+
+			// Check for "sane" (u,v,w) coordinate. (No out-of-bounds check performed here.)
+			function isSaneCoordinate(grid_u, grid_v, grid_w) {
+				if (grid_u != 0 && grid_v != 0 && grid_w != 0) {
+					console.log("isSaneCoordinate: Fatal: Insane (u,v,w) coordinate: " + grid_u + "," + grid_v + "," + grid_w);
+					return false;
+				}
+
+				if (grid_u < 0 || grid_v < 0 || grid_w < 0) {
+					console.log("isSaneCoordinate: Fatal: Insane (u,v,w) coordinate: " + grid_u + "," + grid_v + "," + grid_w);
+					return false;
+				}
+
+				return true;
+			}
+
+			// Get state of immediate neighbor cell to u, v, w location, in some direction (angle).
+			function getNeighbor(grid_u, grid_v, grid_w, angle) {
+				let on_center = grid_u == 0 && grid_v == 0 && grid_w == 0;
+				let on_axis_u = grid_u != 0 && grid_v == 0 && grid_w == 0;
+				let on_axis_v = grid_u == 0 && grid_v != 0 && grid_w == 0;
+				let on_axis_w = grid_u == 0 && grid_v == 0 && grid_w != 0;
+				let on_axis = on_axis_u || on_axis_v || on_axis_w;
+
+				let invert = undefined;
+
+				if (on_center || on_axis) {
+					step = moves[angle];
+					if (on_axis_u) {
+						if (angle == 3) {
+							invert = true;
+						} else {
+							invert = false;
+						}
+					} else if (on_axis_v) {
+						if (angle == 5) {
+							invert = true;
+						} else {
+							invert = false;
+						}
+					} else if (on_axis_w) {
+						if (angle == 1) {
+							invert = true;
+						} else {
+							invert = false;
+						}
+					}
+				} else {
+					let in_plane_uv = grid_u != 0 && grid_v != 0 && grid_w == 0;
+					let in_plane_vw = grid_u == 0 && grid_v != 0 && grid_w != 0;
+					let in_plane_wu = grid_u != 0 && grid_v == 0 && grid_w != 0;
+					if (in_plane_uv) {
+						if (angle == 0 || angle == 1 || angle == 2) {
+							invert = false;
+						} else {
+							invert = true;
+						}
+					} else if (in_plane_vw) {
+						if (angle == 2 || angle == 3 || angle == 4) {
+							invert = false;
+						} else {
+							invert = true;
+						}
+					} else if (in_plane_wu) {
+						if (angle == 4 || angle == 5 || angle == 0) {
+							invert = false;
+						} else {
+							invert = true;
+						}
+					} else {
+						console.log("getNeighbor(" + grid_u + "," + grid_v + "," + grid_w + "): Fatal: Insane (u,v,w) coordinate");
+						return false;
+					}
+				}
+
+				if (!invert) {
+					let step = moves[angle];
+					grid_u += step[0];
+					grid_v += step[1];
+					grid_w += step[2];
+				} else {
+					let step = moves[(angle + 3) % 6];
+					grid_u -= step[0];
+					grid_v -= step[1];
+					grid_w -= step[2];
+				}
+
+				if (isOutOfBounds(grid_u, grid_v, grid_w)) {
+					return false;
+				}
+
+				if (!isSaneCoordinate(grid_u, grid_v, grid_w)) {
+					return false;
+				}
+
+				return grid[grid_u][grid_v][grid_w];
+			}
+
+			// Integrate alive cells over 7-cell "circular" area around (u,v,w) location.
+			function getAreaAround(grid_u, grid_v, grid_w) {
+				let count = grid[grid_u][grid_v][grid_w];
+				for (let angle = 0; angle <= 5; angle++) {
+					count += getNeighbor(grid_u, grid_v, grid_w, angle);
+				}
+				return count;
+			}
+
+			// Toggle cell on mousedown event (passed as arg).
+			function toggleCell(grid_ref, grid_u, grid_v, grid_w, arg) {
+				let hexagon = createHexagonPath(grid_ref, grid_u, grid_v, grid_w);
+				if (canvas.isPointInPath(hexagon, arg.offsetX, arg.offsetY)) {
+					grid_ref[grid_u][grid_v][grid_w] = !grid_ref[grid_u][grid_v][grid_w];
+				}
+			}
+
+			// (Re)Draw hexagonal grid over (u,v,w) space.
+			function drawGrid() {
+				canvas.clearRect(0, 0, width, height);
+				traverseGrid(grid, drawHexagon);
+			}
+
+			// Convert (u,v,w) coordinate to (x,y) coordinate.
+			function convertOffset(grid_u, grid_v, grid_w) {
+				let offset_x = center_x + canvas_zoom * (grid_u * unit_u_x + grid_v * unit_v_x + grid_w * unit_w_x);
+				let offset_y = center_y + canvas_zoom * (grid_u * unit_u_y + grid_v * unit_v_y + grid_w * unit_w_y);
+				return [offset_x, offset_y];
+			}
+
+			// Generate hexagon path for (u,v,w) location.
+			function createHexagonPath(grid_ref, grid_u, grid_v, grid_w) {
+				let radius = canvas_zoom / 2;
+
+				offset = convertOffset(grid_u, grid_v, grid_w);
+				let offset_x = offset[0];
+				let offset_y = offset[1];
+
+				let hexagon = new Path2D();
+				for (let side = 0; side < 6; side++) {
+					let radians = 2 * Math.PI * side / 6 + Math.PI / 2;
+					let point_x = offset_x + radius * Math.cos(radians);
+					let point_y = offset_y + radius * Math.sin(radians);
+					if (side == 0) hexagon.moveTo(point_x, point_y); else hexagon.lineTo(point_x, point_y);
+				}
+				hexagon.closePath();
+				return hexagon;
+			}
+
+			// Draw a hexagon in (u,v,w) space.
+			function drawHexagon(grid_ref, grid_u, grid_v, grid_w, arg=undefined) {
+				let hexagon = createHexagonPath(grid_ref, grid_u, grid_v, grid_w);
+				let alive = grid_ref[grid_u][grid_v][grid_w];
+				canvas.fillStyle = alive ? '#333' : '#fff';
+				canvas.fill(hexagon);
+
+				if (show_coordinates) {
+					offset = convertOffset(grid_u, grid_v, grid_w);
+					let offset_x = offset[0];
+					let offset_y = offset[1];
+
+					let radius = canvas_zoom / 2;
+					canvas.fillStyle = alive ? '#fff' : '#333';
+					canvas.font = Math.round(radius / 2) + "px Arial";
+					canvas.fillText(grid_u + "," + grid_v + "," + grid_w, offset_x - radius / 2, offset_y + radius / 8);
+				}
+			}
+
+			// Load favicon from inline SVG.
+			function setFavicon(svg_id) {
+				$('head').append('<link href="data:image/svg+xml;base64,' + window.btoa($(svg_id)[0].outerHTML) + '" rel="icon" type="image/x-icon" />');
+			}
+		</script>
+	<link href="data:image/svg+xml;base64,PHN2ZyBpZD0iZmF2aWNvbiIgdmVyc2lvbj0iMS4xIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIyMCIgdmlld0JveD0iMCAwIDE3LjMyMDUwODA3NTY4ODc3IDIwIj4KCQkJCTxwYXRoIGZpbGw9IiMwMDAiIGQ9Ik04LjY2MDI1NDAzNzg0NDM4NiAwTDE3LjMyMDUwODA3NTY4ODc3IDVMMTcuMzIwNTA4MDc1Njg4NzcgMTVMOC42NjAyNTQwMzc4NDQzODYgMjBMMCAxNUwwIDVaIj48L3BhdGg+CgkJCTwvc3ZnPg==" rel="icon" type="image/x-icon"></head>
+	<body>
+		<header>
+			<svg id="favicon" version="1.1" xmlns="http://www.w3.org/2000/svg" width="18" height="20" viewBox="0 0 17.32050807568877 20">
+				<path fill="#000" d="M8.660254037844386 0L17.32050807568877 5L17.32050807568877 15L8.660254037844386 20L0 15L0 5Z"></path>
+			</svg>
+		</header>
+		<main>
+			<canvas id="canvas" width="615" height="535"></canvas>
+			<fieldset>
+				<legend>Grid Radius</legend>
+				<div id="slider_grid_radius" class="slider ui-slider ui-corner-all ui-slider-horizontal ui-widget ui-widget-content"><span tabindex="0" class="ui-slider-handle ui-corner-all ui-state-default" style="left: 60%;">60</span></div>
+			</fieldset>
+			<fieldset>
+				<legend>FPS</legend>
+				<div id="slider_fps" class="slider ui-slider ui-corner-all ui-slider-horizontal ui-widget ui-widget-content"><span tabindex="0" class="ui-slider-handle ui-corner-all ui-state-default" style="left: 100%;">60</span></div>
+			</fieldset>
+			<fieldset>
+				<legend>Rules</legend>
+				<label class="ui-checkboxradio-label ui-corner-all ui-button ui-widget"><span class="ui-checkboxradio-icon ui-corner-all ui-icon ui-icon-background ui-icon-blank"></span><span class="ui-checkboxradio-icon-space"> </span><input id="rule_0" type="checkbox" value="0" class="ui-checkboxradio ui-helper-hidden-accessible">0</label>
+				<label class="ui-checkboxradio-label ui-corner-all ui-button ui-widget ui-checkboxradio-checked ui-state-active"><span class="ui-checkboxradio-icon ui-corner-all ui-icon ui-icon-background ui-icon-check ui-state-checked"></span><span class="ui-checkboxradio-icon-space"> </span><input id="rule_1" type="checkbox" value="1" class="ui-checkboxradio ui-helper-hidden-accessible">1</label>
+				<label class="ui-checkboxradio-label ui-corner-all ui-button ui-widget"><span class="ui-checkboxradio-icon ui-corner-all ui-icon ui-icon-background ui-icon-blank"></span><span class="ui-checkboxradio-icon-space"> </span><input id="rule_2" type="checkbox" value="2" class="ui-checkboxradio ui-helper-hidden-accessible">2</label>
+				<label class="ui-checkboxradio-label ui-corner-all ui-button ui-widget"><span class="ui-checkboxradio-icon ui-corner-all ui-icon ui-icon-background ui-icon-blank"></span><span class="ui-checkboxradio-icon-space"> </span><input id="rule_3" type="checkbox" value="3" class="ui-checkboxradio ui-helper-hidden-accessible">3</label>
+				<label class="ui-checkboxradio-label ui-corner-all ui-button ui-widget"><span class="ui-checkboxradio-icon ui-corner-all ui-icon ui-icon-background ui-icon-blank"></span><span class="ui-checkboxradio-icon-space"> </span><input id="rule_4" type="checkbox" value="4" class="ui-checkboxradio ui-helper-hidden-accessible">4</label>
+				<label class="ui-checkboxradio-label ui-corner-all ui-button ui-widget"><span class="ui-checkboxradio-icon ui-corner-all ui-icon ui-icon-background ui-icon-blank"></span><span class="ui-checkboxradio-icon-space"> </span><input id="rule_5" type="checkbox" value="5" class="ui-checkboxradio ui-helper-hidden-accessible">5</label>
+				<label class="ui-checkboxradio-label ui-corner-all ui-button ui-widget"><span class="ui-checkboxradio-icon ui-corner-all ui-icon ui-icon-background ui-icon-blank"></span><span class="ui-checkboxradio-icon-space"> </span><input id="rule_6" type="checkbox" value="6" class="ui-checkboxradio ui-helper-hidden-accessible">6</label>
+				<label class="ui-checkboxradio-label ui-corner-all ui-button ui-widget ui-checkboxradio-checked ui-state-active"><span class="ui-checkboxradio-icon ui-corner-all ui-icon ui-icon-background ui-icon-check ui-state-checked"></span><span class="ui-checkboxradio-icon-space"> </span><input id="rule_7" type="checkbox" value="7" class="ui-checkboxradio ui-helper-hidden-accessible">7</label>
+				<br>
+				<small>Total number of alive cells in each 7-cell area (including self) that sustains life.</small>
+			</fieldset>
+			<fieldset>
+				<legend>Control</legend>
+				<a id="clear_grid" class="ui-button ui-widget ui-corner-all" href="https://paulwilhelm.de/hexacon.html#">Clear Grid</a>
+				<a id="toggle_center" class="ui-button ui-widget ui-corner-all" href="https://paulwilhelm.de/hexacon.html#">Toggle Center</a>
+				<a id="fill_grid" class="ui-button ui-widget ui-corner-all" href="https://paulwilhelm.de/hexacon.html#">Fill Grid</a>
+				<label class="ui-checkboxradio-label ui-corner-all ui-button ui-widget ui-checkboxradio-checked ui-state-active"><span class="ui-checkboxradio-icon ui-corner-all ui-icon ui-icon-background ui-icon-check ui-state-checked"></span><span class="ui-checkboxradio-icon-space"> </span><input id="animation" type="checkbox" value="true" class="ui-checkboxradio ui-helper-hidden-accessible">Animation</label>
+				<br>
+				<small>Click into the Grid to toggle a cell state.</small>
+			</fieldset>
+		</main>
+		<footer>
+			<small>
+				<strong>hexacon.html</strong>: <em>Conway's Game of Life on a Hexagonal Grid</em>
+				(<date>2020</date>)
+				<detail>
+					© <a href="https://paulwilhelm.de/">Paul Wilhelm</a>
+					• v1.0 • <a href="http://www.wtfpl.net/">WTFPL</a>
+				</detail>
+			</small>
+		</footer>
+	
+
+</body></html>
